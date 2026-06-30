@@ -1,13 +1,41 @@
 # sphere-otc-desk
 
-An autonomous **crypto OTC market-maker agent** for the Unicity AgentSphere.
-It advertises a two-way market, answers RFQs with deterministic firm quotes,
-haggles within a reservation band, and settles each trade as a **two-party
-atomic swap** via `sphere.swap` (escrow-based settlement).
+An autonomous **crypto OTC market-maker agent** for the Unicity AgentSphere. It
+advertises a two-way market in UCT/USDU, answers RFQs with deterministic firm
+quotes, haggles within a reservation band, and settles each trade as a
+**non-custodial atomic swap** via `sphere.swap`.
 
-> Status: **Phase 1 skeleton.** The domain core (pricing, risk, negotiation) is
-> complete, typechecked, and runnable offline. The live Sphere wiring is real
-> reference code that needs `npm install` + testnet access to run.
+**Live on Unicity testnet2** as `@hau-otc-desk` — funded with real testnet UCT,
+posting a market intent, and negotiating with counterparties over encrypted DMs.
+A companion **taker** agent (`@hau-taker`) drives the full machine-to-machine
+loop: RFQ → firm quote → accept → atomic swap.
+
+- **Build track:** Autonomous Agents (also fits Payments + Markets)
+- **Agentic:** yes — the desk decides when and how to quote, finds counterparties
+  via the market/DMs, and settles programmatically; a human only sets goals and
+  risk limits.
+- **Runtime:** Node, bare Sphere SDK (not on AstridOS)
+- **Network:** Unicity testnet2 (`SPHERE_NETWORK=testnet`)
+
+## Quick demo (testnet2)
+
+```bash
+npm install
+cp .env.example .env      # set DESK_NAMETAG, ORACLE_API_KEY (public testnet2 key)
+
+# 1. Run the desk — registers a nametag, posts a market intent, listens for RFQs
+npm run live
+
+# 2. (another terminal) fund a taker wallet, then RFQ the desk
+npm run mint  -- USDU 100        # mint testnet USDU into the taker wallet (no faucet)
+npm run taker -- buy 5           # taker RFQs; the desk replies with a firm quote
+npm run taker -- buy 5 --accept  # full loop: quote -> accept -> atomic swap
+
+# Offline (no network): deterministic sim + test suite
+npm run sim && npm run safetycheck && npm run pnlcheck   # …and more (see scripts)
+```
+
+See `docs/SETTLEMENT-MODEL.md` for the non-custodial settlement analysis.
 
 ## Why this shape
 
