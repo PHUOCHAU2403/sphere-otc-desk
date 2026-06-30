@@ -1,0 +1,10 @@
+node_modules/
+dist/
+wallet-data/
+tokens/
+demo/
+.env
+*.log
+node_modules/
+taker-data/
+taker-tokens/

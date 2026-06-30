@@ -1,0 +1,296 @@
+# sphere-otc-desk
+
+An autonomous **crypto OTC market-maker agent** for the Unicity AgentSphere.
+It advertises a two-way market, answers RFQs with deterministic firm quotes,
+haggles within a reservation band, and settles each trade as a **two-party
+atomic swap** via `sphere.swap` (escrow-based settlement).
+
+> Status: **Phase 1 skeleton.** The domain core (pricing, risk, negotiation) is
+> complete, typechecked, and runnable offline. The live Sphere wiring is real
+> reference code that needs `npm install` + testnet access to run.
+
+## Why this shape
+
+The single most important rule of the desk:
+
+> **Pricing and risk are deterministic code. The LLM never sets a price.**
+
+So the architecture splits cleanly:
+
+```
+src/domain/        ← pure, no SDK import, unit-testable
+  types.ts           wire protocol + domain types (amounts are bigint smallest-units)
+  priceFeed.ts       PriceFeed interface + Static / Composite / Median feeds
+  quoteEngine.ts     mid ± spread, decimal-correct, risk-gated  → Quote | Rejection
+  inventory.ts       balances, reservations, per-counterparty & exposure limits
+  negotiation.ts     quote↔counter state machine; emits Effects (no IO)
+
+src/adapters/
+  priceFeeds.ts      CryptoComPriceFeed — live mid from Crypto.com public REST
+  sphereDesk.ts      binds the core to the live SDK: DMs ↔ negotiation ↔ sphere.swap
+
+  persistence.ts     Store interface + DeskSnapshot + MemoryStore
+  killSwitch.ts      manual halt + auto circuit breaker (gates new risk)
+  pnl.ts             mark-to-market equity + daily-loss breaker (pure)
+  prelock.ts         pre-lock policy: timeout bounds + verification gate (pure)
+  audit.ts           hash-chained audit format + pure verifyChain
+
+src/adapters/
+  fileStore.ts       atomic JSON snapshot store (temp-write + rename)
+  persister.ts       debounced snapshot writer
+  fileAuditLog.ts    append-only JSONL audit, fsync'd, chain continues on restart
+  counterpartyVerifier.ts  on-chain counterparty check (interface + Sphere/null)
+
+src/ops/             ops dashboard (reads state + audit, writes HTML)
+  metrics.ts         pure: snapshot + audit events → DashboardModel
+  render.ts          pure: model → Grafana-style HTML (full doc + fragment)
+  generate.ts        read files → write dashboard HTML
+  dashboard.ts       CLI entry (reads STATE_FILE / AUDIT_FILE)
+  demo.ts            generate a populated sample + render (no testnet)
+
+src/deskConfig.ts    pairs, limits, seed inventory — shared by sim and live
+src/sim/simulate.ts  offline end-to-end walkthrough (no SDK, no testnet)
+src/index.ts         live headless agent (Node providers + market intent)
+```
+
+The `NegotiationEngine` is **pure**: every handler returns an `Effects` object
+(`replies`, optional `startSwap`, `logs`) that the adapter executes. That keeps
+all the trading logic testable with zero network and makes the settlement
+handoff explicit.
+
+## Run the offline simulation
+
+No install of the SDK or testnet needed — just the dev tooling:
+
+```bash
+npm install
+npm run sim
+```
+
+You'll see four scenarios: a buy that settles, an oversize RFQ rejected by the
+risk gate, a sell with a counter-offer that's rejected then re-quoted within the
+reservation band and settled, and an RFQ for an unlisted pair.
+
+## Two-way: proposer and acceptor
+
+```bash
+npm run acceptorcheck   # desk evaluates swaps proposed *to* it
+```
+
+The desk works both directions:
+
+- **Proposer** — after its own quote is accepted, it opens the swap
+  (`proposeSwap`). Driven by the RFQ/negotiation loop.
+- **Acceptor** — another agent proposes a swap directly. On `swap:proposal_received`
+  the adapter maps the SDK deal to the desk's perspective (proposer = `partyA`,
+  desk = `partyB`), and `evaluateProposal()` applies the **same deterministic
+  price + risk logic** as quoting: it accepts only if the implied price clears
+  the desk's reservation and every risk gate passes, otherwise `rejectSwap`.
+
+An accepted proposal synthesizes a `Quote` and an agreed session keyed by
+`swapId`, so settlement, persistence, and restart-reconciliation all reuse the
+proposer machinery unchanged.
+
+## Durability (restart-safety)
+
+```bash
+npm run persistcheck   # proves an agreed deal survives a restart and still settles
+```
+
+The desk persists a `DeskSnapshot` (reservations, daily/exposure counters, and
+every non-terminal session incl. its `swapId`) after each state change, via a
+debounced atomic-rename file write (`./wallet-data/desk-state.json`). The
+`swapId` is flushed **synchronously** right after `proposeSwap`, so a crash in
+the gap between opening a swap and its first event can never orphan a deal.
+
+On boot, `index.ts`:
+1. loads the snapshot and rehydrates the ledger + in-flight sessions;
+2. calls `reconcile()` — for each agreed deal it queries
+   `sphere.swap.getSwapStatus()` and applies any terminal outcome that happened
+   while the desk was down (settle / release), aborts deals whose swap was never
+   opened, and leaves still-in-flight swaps to the SDK's own resume + events.
+
+**Source-of-truth rule:** the *chain* is authoritative for balances, the
+*snapshot* for reservations. A fresh start (no snapshot) seeds free balances from
+`sphere.payments.getBalance()`; a restart trusts the snapshot's free balances
+(which already net out reservations) and lets `reconcile()` correct in-flight
+outcomes.
+
+The **kill-switch / breaker state is persisted too**, so a latched halt survives
+a restart — the desk never boots back into a hot state after a crash caused by
+the very condition that tripped the breaker.
+
+**Rolling daily limits** reset at each UTC midnight via `startDailyReset()`
+(`inventory.rollDay()` + an audited `limits_rolled` event), so the
+per-counterparty daily cap is a true 24h rolling window.
+
+**Periodic chain↔ledger true-up** (`startTrueUp`, every `TRUEUP_INTERVAL_MS`)
+corrects drift between the desk ledger and the chain. The invariant it enforces:
+`free[coin] = chainTotal[coin] − Σ reservations still in the wallet`. A leg that
+has been deposited to escrow has left the wallet (tracked by a `deposited` flag
+set when the deposit is paid), so it is *not* subtracted; an undeposited
+reservation still sits in the wallet, so it is. If the chain is below pending
+reservations, the true-up warns and leaves the balance untouched rather than
+writing a negative.
+
+## Ops dashboard
+
+```bash
+npm run dashboard:demo   # populated sample → demo/dashboard.html (no testnet)
+npm run dashboard        # from the live STATE_FILE + AUDIT_FILE → DASHBOARD_OUT
+```
+
+A self-contained, dark "Grafana-style" HTML dashboard rendered from the snapshot
++ audit log: status pill (RUNNING / HALTED + reason), stat panels (equity, daily
+P&L, open exposure, open deals, swaps done/failed), inventory, open deals, an
+event-mix breakdown, recent activity, and an **audit-integrity badge** that
+re-verifies the hash chain. No external assets — open the file in a browser and
+screenshot it. `render.ts` also exports `renderFragment()` for embedding the
+panel elsewhere.
+
+## Pre-lock counterparty check
+
+```bash
+npm run prelockcheck   # timeout bounds + verification gate
+```
+
+Before the desk locks its own token into a swap, it runs the cheap checks that
+cover the residual (non-custodial) settlement risks from `docs/SETTLEMENT-MODEL.md`:
+
+- **Timeout bounds** (`PRELOCK_BOUNDS`, pure, in the quote engine) — an inbound
+  proposal whose `timeout` is below `minTimeoutSec` (late-lock risk) or above
+  `maxTimeoutSec` (liquidity held hostage) is rejected *before* any inventory is
+  reserved.
+- **Counterparty verification** (`CounterpartyVerifier`, adapter) — runs right
+  before the lock in both directions (before `deposit` as proposer, before
+  `acceptSwap` as acceptor). The Sphere implementation confirms the counterparty
+  identity resolves; the deeper ownership + non-inclusion proof is a marked TODO
+  pending an SDK uniqueness-service primitive. `REQUIRE_VERIFICATION=true` blocks
+  on failure (releasing the reservation); `false` runs warn-only. Every check is
+  audited (`prelock_check`).
+
+The desk also defaults to a short swap `timeout` (1800s) to limit liquidity
+lock-up. See `docs/SETTLEMENT-MODEL.md` for the rationale.
+
+## Safety rails (minimum to hold real money)
+
+```bash
+npm run safetycheck   # kill-switch + circuit breaker + tamper-evident audit
+```
+
+**Kill-switch** gates every entry point that creates *new* risk (quoting,
+accepting proposals, opening swaps). In-flight deals are never blocked — they
+must settle or be refunded by the escrow regardless. Two triggers:
+
+- **Manual** — create the control file to pause, remove it to resume:
+  `touch ./wallet-data/HALT` / `rm ./wallet-data/HALT` (polled every 3s).
+- **Automatic circuit breaker** — auto-halts after `MAX_CONSEC_FAILURES`
+  consecutive swap failures (the classic "escrow/counterparties are misbehaving,
+  stop taking risk"). A successful settle resets the counter.
+- **P&L breaker** — marks all inventory to USDU at the current mid every
+  `PNL_INTERVAL_MS` and auto-halts when the day's drawdown reaches
+  `MAX_DAILY_LOSS_USDU`. Equity = Σ(coin balance × mid), so it captures both
+  spread earned and mark-to-market loss from holding inventory while the mid
+  moved. The baseline resets at each UTC day and persists across restarts within
+  the day. A mark with any unpriceable coin is skipped (never acted on).
+
+**Audit log** is append-only JSON Lines, **hash-chained** (each record commits to
+the previous record's hash) and fsync'd before acknowledgement, so truncation or
+tampering is detectable — `FileAuditLog.verifyFile()` recomputes the whole chain
+and reports the first broken `seq`. Every money/risk event is recorded:
+`quote_issued`, `rfq_rejected`, `deal_agreed`, `swap_proposed`, `deposit_sent`,
+`proposal_accepted/rejected`, `swap_completed/failed/cancelled`,
+`kill_halted/resumed`, `boot`, `shutdown`.
+
+## Live price feed
+
+```bash
+npm run pricecheck   # hits the real Crypto.com public API
+```
+
+The reference price is a **`CompositePriceFeed`**: a manual override for illiquid
+OTC tokens (UCT has no CEX market — set `UCT_USDU_MID`) layered over a
+**`MedianPriceFeed`** of live exchange feeds for liquid pairs (BTC/ETH → `*_USDT`,
+since USDU is a USD stablecoin).
+
+Hardening:
+- **Multi-venue median** — the median of all responding venues (Crypto.com +
+  Binance), so a single venue printing a bad price is medianed out. Refuses
+  unless `MIN_PRICE_SOURCES` venues respond (1 = quote on one venue, 2 = require
+  quorum).
+- **Staleness guard** — `CryptoComPriceFeed` never serves a cached price older
+  than `maxStaleMs` (30s) on error; beyond that it returns `null`.
+- **Sanity band** — a bid/ask mid that deviates from the last trade by more than
+  `maxDeviationBps` (5%) is rejected as a crossed/stale book.
+- **Never throws** — any failure returns `null`, so the desk declines to quote
+  rather than price off a missing/stale number. The quote engine still applies
+  spread; the feed only supplies the mid.
+
+## Run live (testnet)
+
+```bash
+npm install                # SDK ^0.10.5 (the swap module lives in 0.10.x, not 0.4.x)
+cp .env.example .env       # set SPHERE_NETWORK, DESK_NAMETAG, ORACLE_API_KEY…
+npm run live
+```
+
+`index.ts` boots the SDK (`network` forwarded to `Sphere.init`, `accounting:
+true` + `swap` enabled for atomic swaps), registers the `@nametag`, reconciles
+inventory against `sphere.payments.getBalance()`, posts a market intent
+advertising the desk, and listens for RFQs.
+
+**Verified against the live testnet:** `Sphere.init` connects to
+`wss://nostr-relay.testnet.unicity.network`, registers the nametag, and creates a
+`DIRECT://` identity. Two gotchas are handled for you:
+
+- **WebSocket** — Node's built-in (undici) global WebSocket fails against the
+  relay; `src/adapters/wsShim.ts` forces the `ws` package and is imported first
+  in `index.ts`. Don't remove that import.
+- **`network`** — must be passed to `Sphere.init` (not just `createNodeProviders`),
+  or init throws `INVALID_CONFIG` (token registry).
+
+To actually trade you need inventory: fund the wallet from the Unicity faucet
+(`unicitynetwork/js-faucet`) and set `ORACLE_API_KEY` (testnet gateway auth — the
+SDK warns and runs unauthenticated without it). A fresh wallet has balance 0, so
+the desk will post its intent but reject RFQs with `INSUFFICIENT_INVENTORY` until
+funded.
+
+## How settlement works (settlement is non-custodial)
+
+When terms lock, the desk calls `sphere.swap.proposeSwap()`. From there the
+**SDK's own swap state machine** drives the swap:
+
+```
+proposed → accepted → announced → depositing → awaiting_counter → concluding → completed
+```
+
+The settlement is **non-custodial and trustless** — confirmed against Unicity's
+formal paper *"Predicates and Atomic Swaps"* (`unicitynetwork/unicity-predicates-tex`).
+Each party moves its **own** token into a predicate-controlled swap state recorded
+on the Unicity uniqueness service; the service is an append-only registry that
+returns inclusion proofs — it **never holds tokens and cannot steal**. The swap
+predicate cryptographically enforces both-or-nothing: a leg is claimable by the
+counterparty *iff* they committed in time (verified by inclusion proof), else it
+reverts to the owner after `timeout`. Proven: both follow → swap completes; either
+deviates → both keep their tokens. So "deposit" here means *locking your own
+token*, not handing it to a custodian, and `verifyPayout` checks the
+counterparty's committed state. See `docs/SETTLEMENT-MODEL.md` for the full
+mapping + the residual (non-custodial) risks: late-locking under the 2-tx variant,
+counterparty offering an unowned/spent token, and liquidity locked until
+`timeout`. Design implication: prefer **short timeouts** and verify the
+counterparty's token state before locking.
+
+## Next (Phase 2+)
+
+Everything below is enhancement — the settlement model is resolved (non-custodial,
+see `docs/SETTLEMENT-MODEL.md`) and the risk stack (two-venue median, daily-limits
+scheduler, kill-switch + failure breaker + P&L breaker, hash-chained audit,
+chain↔ledger true-up, ops dashboard) is wired.
+
+- **Pre-lock counterparty check**: verify the counterparty's token (ownership +
+  non-inclusion proof) and use short `timeout`s, to cover the residual
+  liveness/griefing risks in `docs/SETTLEMENT-MODEL.md`.
+- Confirm the swap variant in `sphere.swap` (3-tx safe vs 2-tx late-lock hazard)
+  from SDK source or a quick team question — non-blocking.
+- Optional: port the settlement-critical path to Astrid (Rust) for the security
+  stack (WASM sandbox, capability tokens, signed audit) when heading to mainnet.

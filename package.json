@@ -1,0 +1,38 @@
+{
+  "name": "sphere-otc-desk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous crypto OTC market-maker agent on Unicity AgentSphere",
+  "type": "module",
+  "scripts": {
+    "sim": "tsx src/sim/simulate.ts",
+    "pricecheck": "tsx src/sim/priceCheck.ts",
+    "persistcheck": "tsx src/sim/persistCheck.ts",
+    "acceptorcheck": "tsx src/sim/acceptorCheck.ts",
+    "safetycheck": "tsx src/sim/safetyCheck.ts",
+    "hardeningcheck": "tsx src/sim/hardeningCheck.ts",
+    "pnlcheck": "tsx src/sim/pnlCheck.ts",
+    "prelockcheck": "tsx src/sim/prelockCheck.ts",
+    "dashboard": "tsx src/ops/dashboard.ts",
+    "dashboard:demo": "tsx src/ops/demo.ts",
+    "wallet": "tsx src/ops/wallet.ts",
+    "taker": "tsx src/ops/taker.ts",
+    "mint": "tsx src/ops/mint.ts",
+    "faucet": "tsx src/ops/faucet.ts",
+    "live": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@unicitylabs/sphere-sdk": "^0.10.5",
+    "dotenv": "^17.4.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
