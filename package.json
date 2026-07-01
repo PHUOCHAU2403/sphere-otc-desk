@@ -17,6 +17,7 @@
     "dashboard:demo": "tsx src/ops/demo.ts",
     "wallet": "tsx src/ops/wallet.ts",
     "taker": "tsx src/ops/taker.ts",
+    "escrow": "tsx src/ops/escrow.ts",
     "mint": "tsx src/ops/mint.ts",
     "faucet": "tsx src/ops/faucet.ts",
     "live": "tsx src/index.ts",

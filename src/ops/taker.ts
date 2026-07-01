@@ -27,7 +27,6 @@ async function main(): Promise<void> {
   const side = (args[0] === 'sell' ? 'sell' : 'buy') as 'buy' | 'sell';
   const amountUct = Number(args[1] ?? '10');
   const deskTag = '@' + env('DESK_NAMETAG', 'hau-otc-desk').replace(/^@/, '');
-  const escrow = env('ESCROW_ADDRESS', '@escrow-testnet');
 
   const network = env('SPHERE_NETWORK', 'testnet') as 'mainnet' | 'testnet' | 'dev';
   const apiKey = env('ORACLE_API_KEY');
@@ -48,8 +47,7 @@ async function main(): Promise<void> {
     network,
     ...(mnemonic ? { mnemonic } : { autoGenerate: true }),
     nametag: env('TAKER_NAMETAG', 'hau-taker'),
-    accounting: true, // required for swaps
-    swap: { defaultEscrowAddress: escrow },
+    accounting: true, // required for token engine (send/receive/mint)
   });
   console.log('taker identity:', sphere.getNametag(), sphere.identity?.directAddress);
   await sphere.payments.receive().catch(() => undefined);
@@ -66,48 +64,23 @@ async function main(): Promise<void> {
   let finish: () => void = () => undefined;
   const done = new Promise<void>((resolve) => (finish = resolve));
 
-  // --- swap lifecycle (Chặng B) ---
-  if (accept) {
-    sphere.on('swap:proposal_received', (e) => {
-      const ev = e as { swapId: string };
-      console.log('\n⇄ swap proposal received', ev.swapId.slice(0, 12), '— accepting…');
-      void sphere
-        .swap!.acceptSwap(ev.swapId)
-        .then(() => console.log('  acceptSwap ✓ (announced to escrow)'))
-        .catch((err) => {
-          console.log('  acceptSwap error:', String(err));
-          finish();
-        });
-    });
-    sphere.on('swap:announced', (e) => {
-      const ev = e as { swapId: string };
-      console.log('⇄ escrow announced — depositing our leg (USDU)…');
-      void sphere
-        .swap!.deposit(ev.swapId)
-        .then(() => console.log('  deposit ✓'))
-        .catch((err) => console.log('  deposit error:', String(err)));
-    });
-    sphere.on('swap:completed', (e) => {
-      const ev = e as { swapId: string; payoutVerified?: boolean };
-      console.log('\n=== SWAP COMPLETED ✓ ===  payoutVerified:', ev.payoutVerified);
-      finish();
-    });
-    sphere.on('swap:failed', (e) => {
-      console.log('\n=== SWAP FAILED ===', JSON.stringify(e).slice(0, 200));
-      finish();
-    });
-    sphere.on('swap:cancelled', (e) => {
-      console.log('\n=== SWAP CANCELLED ===', JSON.stringify(e).slice(0, 200));
-      finish();
-    });
-  }
-
-  // --- DM handler: the quote (and reject) ---
+  // --- DM handler: quote, then escrow-agent settlement (Chặng B) ---
   sphere.communications.onDirectMessage((m) => {
     let msg: { t?: string; rfqId?: string; [k: string]: unknown };
     try {
       msg = JSON.parse(m.content);
     } catch {
+      return;
+    }
+    // Escrow callbacks carry no rfqId — handle before the rfq filter.
+    if (msg.t === 'escrow_settled') {
+      console.log('\n=== SWAP SETTLED ✓ (escrow paid out) ===');
+      finish();
+      return;
+    }
+    if (msg.t === 'escrow_refunded') {
+      console.log('\n=== SWAP REFUNDED (counterparty did not deposit in time) ===');
+      finish();
       return;
     }
     if (msg.rfqId !== rfqId) return;
@@ -118,7 +91,7 @@ async function main(): Promise<void> {
       console.log('\n=== QUOTE FROM DESK ===');
       console.log(`  ${side} ${qty} UCT @ ${price} = ${cost} USDU`);
       if (accept) {
-        console.log('  → accepting; the desk will open an atomic swap…');
+        console.log('  → accepting; the desk will open an escrow-mediated swap…');
         void sphere.communications.sendDM(deskTag, JSON.stringify({ t: 'accept', rfqId }));
       } else {
         console.log('\n(Chặng A — quote only. Add --accept for the swap.)');
@@ -127,6 +100,20 @@ async function main(): Promise<void> {
     } else if (msg.t === 'reject') {
       console.log('\n=== DESK REJECTED ===  reason:', msg['reason']);
       finish();
+    } else if (msg.t === 'settle') {
+      // Desk opened the swap via the escrow — pay our leg to the escrow.
+      const swapId = String(msg['swapId']);
+      const escrowTag = String(msg['escrow']);
+      const payCoin = String(msg['payCoin']);
+      const payAmount = String(msg['payAmount']);
+      console.log(`⇄ paying ${payCoin} ${payAmount} to escrow ${escrowTag} (memo ${swapId.slice(0, 8)}…)`);
+      void sphere.payments
+        .send({ coinId: payCoin, amount: payAmount, recipient: escrowTag, memo: swapId })
+        .then(() => console.log('  taker leg deposited ✓ — waiting for escrow to settle…'))
+        .catch((err) => {
+          console.log('  deposit error:', String(err));
+          finish();
+        });
     }
   });
 

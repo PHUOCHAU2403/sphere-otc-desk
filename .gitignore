@@ -8,3 +8,5 @@ demo/
 node_modules/
 taker-data/
 taker-tokens/
+escrow-data/
+escrow-tokens/

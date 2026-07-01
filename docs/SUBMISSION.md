@@ -43,9 +43,14 @@ Network primitives exercised — not a wallet bolted on the surface:
   `market.postIntent`, so other agents can discover and RFQ it.
 - **Payments & minting** — real testnet UCT inventory received via the wallet-api
   mailbox; the taker funds itself with `payments.mintFungibleToken` (USDU).
-- **Swaps** — on accept, the desk calls `swap.proposeSwap`; the taker handles
-  `swap:proposal_received → acceptSwap → deposit → swap:completed` for
-  non-custodial atomic settlement.
+- **Escrow-mediated atomic settlement** — a **third agent** (`@hau-escrow`,
+  `npm run escrow`) holds both legs and pays them out crossed only when both
+  arrive, refunding a lone leg on timeout. On accept, the desk registers the
+  swap with the escrow, tells the taker to pay its leg, and deposits its own —
+  all as memo-tagged wallet-api transfers. Atomic from each party's view: both
+  complete, or both keep their tokens. (We ship our own escrow because the v2
+  testnet escrow isn't migrated yet — confirmed by the Unicity team, who
+  suggested exactly this.)
 
 ## Autonomy
 
@@ -92,11 +97,12 @@ builders.
 npm install
 cp .env.example .env       # set DESK_NAMETAG, ORACLE_API_KEY (public testnet2 key)
 
-npm run live               # desk: registers nametag, posts intent, listens for RFQs
+npm run escrow             # 1) escrow agent (@hau-escrow): holds + settles both legs
+npm run live               # 2) desk: registers nametag, posts intent, listens for RFQs
 # in another terminal:
 npm run mint  -- USDU 100  # fund the taker wallet (no faucet on v2)
-npm run taker -- buy 5     # taker RFQs the desk → receives a firm quote
-npm run taker -- buy 5 --accept   # full loop: quote → accept → atomic swap
+npm run taker -- buy 5     # taker RFQs the desk → receives a firm quote (Chặng A)
+npm run taker -- buy 5 --accept   # full loop: quote → accept → escrow settles (Chặng B)
 
 npm run dashboard          # render the live ops dashboard (HTML)
 # offline: npm run sim && npm run safetycheck && npm run pnlcheck
@@ -104,10 +110,16 @@ npm run dashboard          # render the live ops dashboard (HTML)
 
 ## Status note (honest)
 
-The desk is live on testnet2 and the full negotiation path works end to end:
-mint → RFQ → quote → accept → `proposeSwap` (deal validated). Atomic-swap
-*settlement* needs a testnet2 **escrow address** — the docs' `@escrow-testnet`
-does not resolve on testnet2 (`SWAP_RESOLVE_FAILED`). The escrow address is read
-from `ESCROW_ADDRESS` in `.env`; once the correct testnet2 escrow is provided,
-the swap settles with no code change. Everything up to that single external
-dependency runs and moves real testnet value.
+The desk is live on testnet2 and the **full loop settles end to end**: mint →
+RFQ → quote → accept → both legs deposited to our escrow agent → escrow pays out
+crossed → `escrow_settled`, moving real testnet value in both directions.
+
+We run our **own escrow agent** (`@hau-escrow`) because the protocol's v2 testnet
+escrow hasn't been migrated yet — the docs' `@escrow-testnet` returns
+`SWAP_RESOLVE_FAILED`, which the Unicity team confirmed is an oversight on their
+side and suggested we implement our own for now. Our escrow is a genuine
+third-party coordinator: it never nets a token (pays out exactly what it
+receives), settles only when both legs are present, and refunds on timeout — so
+it's atomic from each party's perspective without either party trusting the
+other. When the native predicate-based escrow ships, the desk can swap back to
+`sphere.swap` with no change to the negotiation or risk layers.

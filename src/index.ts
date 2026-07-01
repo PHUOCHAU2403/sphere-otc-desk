@@ -214,6 +214,7 @@ async function main(): Promise<void> {
     priceFeed,
     audit,
     escrowAddress: escrow,
+    escrowAgent: '@' + env('ESCROW_AGENT', 'hau-escrow').replace(/^@/, ''),
     symbolToCoin,
     verifier: new SphereCounterpartyVerifier(sphere),
     requireVerification: env('REQUIRE_VERIFICATION', 'true') !== 'false',

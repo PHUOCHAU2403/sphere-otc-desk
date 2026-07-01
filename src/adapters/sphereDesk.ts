@@ -13,6 +13,7 @@
  * This file only orchestrates the handoff and durability.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Sphere } from '@unicitylabs/sphere-sdk';
 import type { NegotiationEngine, Effects } from '../domain/negotiation.js';
 import type { Inventory } from '../domain/inventory.js';
@@ -47,6 +48,8 @@ export interface SphereDeskOptions {
   readonly priceFeed: PriceFeed;
   readonly audit: AuditLog;
   readonly escrowAddress: string;
+  /** Nametag of the escrow agent that settles swaps (our own on v2). */
+  readonly escrowAgent: string;
   /** Map exchange/asset symbol → the coinId used in the ledger. */
   readonly symbolToCoin: Readonly<Record<string, string>>;
   /** On-chain pre-lock counterparty verification. */
@@ -67,6 +70,7 @@ export class SphereOtcDesk {
   private readonly priceFeed: PriceFeed;
   private readonly audit: AuditLog;
   private readonly escrow: string;
+  private readonly escrowAgent: string;
   private readonly symbolToCoin: Readonly<Record<string, string>>;
   private readonly verifier: CounterpartyVerifier;
   private readonly requireVerification: boolean;
@@ -85,6 +89,7 @@ export class SphereOtcDesk {
     this.priceFeed = opts.priceFeed;
     this.audit = opts.audit;
     this.escrow = opts.escrowAddress;
+    this.escrowAgent = opts.escrowAgent;
     this.symbolToCoin = opts.symbolToCoin;
     this.verifier = opts.verifier;
     this.requireVerification = opts.requireVerification;
@@ -430,6 +435,22 @@ export class SphereOtcDesk {
   }
 
   private async onDm(peer: string, content: string): Promise<void> {
+    // Escrow-agent settlement callbacks (our own escrow, since v2 has none yet).
+    const ctl = tryJson(content);
+    if (ctl && typeof ctl['swapId'] === 'string' && (ctl['t'] === 'escrow_settled' || ctl['t'] === 'escrow_refunded')) {
+      const rfqId = this.neg.rfqIdForSwap(ctl['swapId']);
+      if (rfqId) {
+        if (ctl['t'] === 'escrow_settled') {
+          this.record('swap_completed', { swapId: ctl['swapId'], rfqId, via: 'escrow-agent' });
+          this.react(this.neg.onSwapCompleted(rfqId));
+        } else {
+          this.record('swap_cancelled', { swapId: ctl['swapId'], rfqId, reason: 'escrow refund' });
+          this.react(this.neg.onSwapFailed(rfqId, 'escrow refunded'));
+        }
+      }
+      return;
+    }
+
     const msg = parseWire(content);
     if (!msg) return; // not a structured desk message — an LLM layer would handle NL here
     const effects = await this.neg.handle(peer, msg);
@@ -471,30 +492,61 @@ export class SphereOtcDesk {
     this.persister.schedule();
   }
 
+  /**
+   * Open a swap via our own escrow agent (the v2 SDK escrow isn't shipped yet).
+   * Registers the swap with the escrow, tells the counterparty to pay its leg,
+   * and deposits the desk's leg. The escrow pays both out crossed once both legs
+   * arrive, then DMs `escrow_settled` (handled in onDm) to release the ledger.
+   */
   private async openSwap(terms: SwapTerms): Promise<void> {
-    const identity = this.sphere.identity;
-    if (!identity?.directAddress) throw new Error('desk identity not initialized');
+    const swapId = randomUUID().replace(/-/g, '');
+    const me = this.sphere.getNametag() ? '@' + this.sphere.getNametag()!.replace(/^@/, '') : this.sphere.identity!.directAddress!;
+    try {
+      // 1. Register the swap with the escrow agent.
+      await this.sphere.communications.sendDM(this.escrowAgent, JSON.stringify({
+        t: 'escrow_open', swapId, partyA: me, partyB: terms.counterparty,
+        aCoin: terms.deskGivesCoin, aAmount: terms.deskGivesAmount.toString(),
+        bCoin: terms.deskGetsCoin, bAmount: terms.deskGetsAmount.toString(),
+        timeoutSec: terms.timeoutSec,
+      }));
+      // 2. Tell the counterparty to pay its leg to the escrow.
+      await this.sphere.communications.sendDM(terms.counterparty, JSON.stringify({
+        t: 'settle', rfqId: terms.rfqId, swapId, escrow: this.escrowAgent,
+        payCoin: terms.deskGetsCoin, payAmount: terms.deskGetsAmount.toString(),
+        getCoin: terms.deskGivesCoin, getAmount: terms.deskGivesAmount.toString(),
+      }));
+      // 3. Deposit the desk's own leg to the escrow.
+      await this.sphere.payments.send({
+        coinId: terms.deskGivesCoin, amount: terms.deskGivesAmount.toString(),
+        recipient: this.escrowAgent, memo: swapId,
+      });
+    } catch (err) {
+      // A resolve/DM/deposit failure must not crash the desk — fail this RFQ,
+      // release the reservation, and keep serving. (Most common cause: the
+      // escrow agent isn't running / its nametag isn't resolvable yet.)
+      this.record('swap_failed', { rfqId: terms.rfqId, swapId, reason: String(err) });
+      this.react(this.neg.onSwapFailed(terms.rfqId, `openSwap failed: ${String(err)}`));
+      this.persister.schedule();
+      this.log(`openSwap ${swapId} for rfq ${terms.rfqId} FAILED: ${String(err)} — reservation released`);
+      return;
+    }
 
-    const result = await this.sphere.swap!.proposeSwap(
-      {
-        partyA: identity.directAddress,
-        partyB: terms.counterparty,
-        partyACurrency: terms.deskGivesCoin,
-        partyAAmount: terms.deskGivesAmount.toString(),
-        partyBCurrency: terms.deskGetsCoin,
-        partyBAmount: terms.deskGetsAmount.toString(),
-        timeout: terms.timeoutSec,
-        escrowAddress: this.escrow,
-      },
-      { message: `OTC settlement for ${terms.rfqId}` },
-    );
-
-    // Bind swapId to the session and persist immediately so a crash right after
-    // proposeSwap can still route the swap's events back on restart.
-    this.neg.attachSwap(terms.rfqId, result.swapId);
+    this.neg.attachSwap(terms.rfqId, swapId);
+    this.inventory.markDeposited(terms.rfqId);
     await this.persister.flush();
-    this.record('swap_proposed', { rfqId: terms.rfqId, swapId: result.swapId });
-    this.log(`swap proposed ${result.swapId} for rfq ${terms.rfqId}`);
+    this.record('swap_proposed', { rfqId: terms.rfqId, swapId, via: 'escrow-agent' });
+    this.record('deposit_sent', { swapId });
+    this.log(`escrow swap ${swapId} for rfq ${terms.rfqId} — desk leg deposited, awaiting counterparty + settle`);
+  }
+}
+
+/** Best-effort JSON parse for control messages. */
+function tryJson(s: string): Record<string, unknown> | null {
+  try {
+    const o = JSON.parse(s) as unknown;
+    return o && typeof o === 'object' ? (o as Record<string, unknown>) : null;
+  } catch {
+    return null;
   }
 }
 
