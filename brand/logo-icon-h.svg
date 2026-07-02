@@ -1,0 +1,14 @@
+<svg viewBox="0 0 512 512" width="512" height="512" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Hau OTC Desk — monogram H app icon</title>
+  <rect width="512" height="512" rx="112" fill="#111113"/>
+  <g transform="translate(86,86) scale(3.4)">
+    <!-- pillars -->
+    <rect x="18" y="20" width="12" height="60" rx="3" fill="#F7F6F2"/>
+    <rect x="70" y="20" width="12" height="60" rx="3" fill="#F7F6F2"/>
+    <!-- swap crossbar -->
+    <rect x="31" y="41" width="28" height="7" rx="2" fill="#D2683B"/>
+    <polygon points="58,36 58,53 72,44.5" fill="#D2683B"/>
+    <rect x="41" y="53" width="28" height="7" rx="2" fill="#D2683B"/>
+    <polygon points="42,48 42,65 28,56.5" fill="#D2683B"/>
+  </g>
+</svg>

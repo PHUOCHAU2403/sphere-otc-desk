@@ -1,0 +1,11 @@
+<svg viewBox="0 0 512 512" width="512" height="512" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Hau OTC Desk — app icon (light)</title>
+  <rect width="512" height="512" rx="112" fill="#F7F6F2"/>
+  <rect x="0.5" y="0.5" width="511" height="511" rx="111.5" fill="none" stroke="#E4E2DB"/>
+  <g transform="translate(86,86) scale(3.4)">
+    <rect x="22" y="33" width="44" height="9" rx="2.5" fill="#D2683B"/>
+    <polygon points="62,25 62,50 86,37.5" fill="#D2683B"/>
+    <rect x="34" y="58" width="44" height="9" rx="2.5" fill="#111113"/>
+    <polygon points="38,50 38,75 14,62.5" fill="#111113"/>
+  </g>
+</svg>

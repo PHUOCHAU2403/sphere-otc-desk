@@ -1,5 +1,7 @@
 # sphere-otc-desk
 
+![Hau OTC Desk — autonomous OTC market-maker, private RFQ, atomic escrow settlement](brand/cover.png)
+
 An autonomous **crypto OTC market-maker agent** for the Unicity AgentSphere. It
 advertises a two-way market in UCT/USDU, answers RFQs with deterministic firm
 quotes, haggles within a reservation band, and settles each trade as an

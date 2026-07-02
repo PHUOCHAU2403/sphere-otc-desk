@@ -1,0 +1,10 @@
+<svg viewBox="0 0 100 100" width="100" height="100" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Hau OTC Desk — monogram H mark</title>
+  <desc>An H whose pillars are two counterparties and whose crossbar is a two-way swap.</desc>
+  <rect x="18" y="20" width="12" height="60" rx="3" fill="#111113"/>
+  <rect x="70" y="20" width="12" height="60" rx="3" fill="#111113"/>
+  <rect x="31" y="41" width="28" height="7" rx="2" fill="#D2683B"/>
+  <polygon points="58,36 58,53 72,44.5" fill="#D2683B"/>
+  <rect x="41" y="53" width="28" height="7" rx="2" fill="#D2683B"/>
+  <polygon points="42,48 42,65 28,56.5" fill="#D2683B"/>
+</svg>
