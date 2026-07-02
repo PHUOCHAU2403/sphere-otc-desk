@@ -2,9 +2,10 @@
 
 **Autonomous OTC market-maker agent on the Unicity AgentSphere.** It posts a
 market intent, quotes inbound RFQs deterministically over encrypted DMs, haggles
-within a reservation band, and settles trades as non-custodial atomic swaps. A
-companion taker agent drives the full loop end to end — two agents negotiate and
-settle a trade with no human clicking through any step.
+within a reservation band, and settles trades as atomic swaps through a dedicated
+escrow agent. A companion taker agent and the escrow agent drive the full loop
+end to end — two agents negotiate and settle a trade with no human clicking
+through any step.
 
 | | |
 |---|---|
@@ -13,15 +14,14 @@ settle a trade with no human clicking through any step.
 | **AstridOS** | No (bare Sphere SDK on Node) |
 | **Network** | Unicity **testnet2** (`SPHERE_NETWORK=testnet`) |
 | **Repository (public)** | https://github.com/PHUOCHAU2403/sphere-otc-desk |
-| **Live agents** | desk `@hau-otc-desk` · taker `@hau-taker` |
+| **Live agents** | desk `@hau-otc-desk` · taker `@hau-taker` · escrow `@hau-escrow` |
 
 ## What it is
 
 An over-the-counter (OTC) desk is a market maker that quotes a private, two-way
 price and trades directly with a counterparty — no public order book to
-front-run, no intermediary holding funds. This is exactly what the AgentSphere
-enables for machines: discover each other on the network, negotiate privately,
-and settle atomically.
+front-run. This is exactly what the AgentSphere enables for machines: discover
+each other on the network, negotiate privately, and settle atomically.
 
 `Hau OTC Desk` makes a two-way market in **UCT/USDU**. When another agent sends an
 RFQ, the desk prices it from a reference mid ± spread, replies with a firm quote,
@@ -86,10 +86,12 @@ the natural primitive for agent-to-agent value exchange.
 
 The desk **exposes a service other agents can transact with**: it publishes a
 market intent and answers RFQs, so any agent that speaks the wire protocol can
-get a firm quote and trade. The repo also documents the SDK's non-custodial
-swap mechanics (`docs/SETTLEMENT-MODEL.md`) and the v2 setup gotchas we hit
-(wallet-api rails, network forwarding, the `ws` WebSocket) — useful for other
-builders.
+get a firm quote and trade. The **reusable escrow agent** is itself a
+contribution — any two agents can settle an atomic swap through it while the
+native `sphere.swap` escrow is still being migrated to v2. The repo also
+documents the native swap model (`docs/SETTLEMENT-MODEL.md`) and the v2 setup
+gotchas we hit (wallet-api rails, network forwarding, the `ws` WebSocket) —
+useful for other builders.
 
 ## Run / reproduce (testnet2)
 
@@ -117,9 +119,11 @@ crossed → `escrow_settled`, moving real testnet value in both directions.
 We run our **own escrow agent** (`@hau-escrow`) because the protocol's v2 testnet
 escrow hasn't been migrated yet — the docs' `@escrow-testnet` returns
 `SWAP_RESOLVE_FAILED`, which the Unicity team confirmed is an oversight on their
-side and suggested we implement our own for now. Our escrow is a genuine
-third-party coordinator: it never nets a token (pays out exactly what it
-receives), settles only when both legs are present, and refunds on timeout — so
-it's atomic from each party's perspective without either party trusting the
-other. When the native predicate-based escrow ships, the desk can swap back to
-`sphere.swap` with no change to the negotiation or risk layers.
+side and suggested we implement our own for now. Our escrow is a genuine neutral
+coordinator: it never nets a token (pays out exactly what it receives), settles
+only when both legs are present, and refunds on timeout — so it's atomic from
+each party's perspective (the two counterparties never have to trust *each
+other*; they rely on the escrow agent to follow its rules for the few seconds it
+holds both legs). This is escrow-based, not the trustless non-custodial model —
+honest framing. When the native predicate-based escrow ships on v2, the desk can
+swap back to `sphere.swap` with no change to the negotiation or risk layers.

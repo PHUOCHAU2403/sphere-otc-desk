@@ -2,13 +2,16 @@
 
 An autonomous **crypto OTC market-maker agent** for the Unicity AgentSphere. It
 advertises a two-way market in UCT/USDU, answers RFQs with deterministic firm
-quotes, haggles within a reservation band, and settles each trade as a
-**non-custodial atomic swap** via `sphere.swap`.
+quotes, haggles within a reservation band, and settles each trade as an
+**atomic swap through a dedicated escrow agent** — both legs pay out crossed
+once both arrive, or refund on timeout. (The native non-custodial predicate
+swap isn't on testnet2 yet — see *Settlement* below.)
 
 **Live on Unicity testnet2** as `@hau-otc-desk` — funded with real testnet UCT,
 posting a market intent, and negotiating with counterparties over encrypted DMs.
-A companion **taker** agent (`@hau-taker`) drives the full machine-to-machine
-loop: RFQ → firm quote → accept → atomic swap.
+A companion **taker** agent (`@hau-taker`) and an **escrow** agent (`@hau-escrow`)
+drive the full machine-to-machine loop: RFQ → firm quote → accept → both legs
+deposited to the escrow → atomic settlement. Proven end to end on testnet2.
 
 - **Build track:** Autonomous Agents (also fits Payments + Markets)
 - **Agentic:** yes — the desk decides when and how to quote, finds counterparties
@@ -23,19 +26,23 @@ loop: RFQ → firm quote → accept → atomic swap.
 npm install
 cp .env.example .env      # set DESK_NAMETAG, ORACLE_API_KEY (public testnet2 key)
 
-# 1. Run the desk — registers a nametag, posts a market intent, listens for RFQs
+# 1. Run the escrow agent — the neutral coordinator that settles both legs
+npm run escrow
+
+# 2. (another terminal) run the desk — registers a nametag, posts intent, listens
 npm run live
 
-# 2. (another terminal) fund a taker wallet, then RFQ the desk
+# 3. (another terminal) fund a taker wallet, then RFQ the desk
 npm run mint  -- USDU 100        # mint testnet USDU into the taker wallet (no faucet)
 npm run taker -- buy 5           # taker RFQs; the desk replies with a firm quote
-npm run taker -- buy 5 --accept  # full loop: quote -> accept -> atomic swap
+npm run taker -- buy 5 --accept  # full loop: quote -> accept -> escrow settles
 
 # Offline (no network): deterministic sim + test suite
 npm run sim && npm run safetycheck && npm run pnlcheck   # …and more (see scripts)
 ```
 
-See `docs/SETTLEMENT-MODEL.md` for the non-custodial settlement analysis.
+See `docs/SETTLEMENT-MODEL.md` for the settlement analysis — our escrow agent as
+shipped today, and the native non-custodial predicate swap on the roadmap.
 
 ## Why this shape
 
@@ -107,13 +114,16 @@ npm run acceptorcheck   # desk evaluates swaps proposed *to* it
 
 The desk works both directions:
 
-- **Proposer** — after its own quote is accepted, it opens the swap
-  (`proposeSwap`). Driven by the RFQ/negotiation loop.
-- **Acceptor** — another agent proposes a swap directly. On `swap:proposal_received`
-  the adapter maps the SDK deal to the desk's perspective (proposer = `partyA`,
-  desk = `partyB`), and `evaluateProposal()` applies the **same deterministic
-  price + risk logic** as quoting: it accepts only if the implied price clears
-  the desk's reservation and every risk gate passes, otherwise `rejectSwap`.
+- **Proposer** — after its own quote is accepted, it opens the swap: it registers
+  the deal with the escrow agent, tells the counterparty to pay its leg, and
+  deposits its own leg (`openSwap` in the adapter). Driven by the RFQ/negotiation
+  loop.
+- **Acceptor** — another agent proposes terms directly, and `evaluateProposal()`
+  applies the **same deterministic price + risk logic** as quoting: it accepts
+  only if the implied price clears the desk's reservation and every risk gate
+  passes, otherwise it rejects. (The pure logic is covered by `acceptorcheck`;
+  the direct-proposal wiring targets the native `sphere.swap` path for when it
+  ships on v2.)
 
 An accepted proposal synthesizes a `Quote` and an agreed session keyed by
 `swapId`, so settlement, persistence, and restart-reconciliation all reuse the
@@ -128,15 +138,18 @@ npm run persistcheck   # proves an agreed deal survives a restart and still sett
 The desk persists a `DeskSnapshot` (reservations, daily/exposure counters, and
 every non-terminal session incl. its `swapId`) after each state change, via a
 debounced atomic-rename file write (`./wallet-data/desk-state.json`). The
-`swapId` is flushed **synchronously** right after `proposeSwap`, so a crash in
-the gap between opening a swap and its first event can never orphan a deal.
+`swapId` is flushed **synchronously** right after the swap is opened, so a crash
+in the gap between opening a swap and its first event can never orphan a deal.
+(The escrow agent has its own durable state — see *Settlement* below — so a
+crash on either side self-heals.)
 
 On boot, `index.ts`:
 1. loads the snapshot and rehydrates the ledger + in-flight sessions;
-2. calls `reconcile()` — for each agreed deal it queries
-   `sphere.swap.getSwapStatus()` and applies any terminal outcome that happened
-   while the desk was down (settle / release), aborts deals whose swap was never
-   opened, and leaves still-in-flight swaps to the SDK's own resume + events.
+2. calls `reconcile()` — reconciles each agreed deal, aborting deals whose swap
+   was never opened and releasing reservations for terminal ones; the escrow
+   agent independently drives any in-flight swap to settle-or-refund (below) and
+   the desk applies the `escrow_settled` / `escrow_refunded` callback when it
+   lands.
 
 **Source-of-truth rule:** the *chain* is authoritative for balances, the
 *snapshot* for reservations. A fresh start (no snapshot) seeds free balances from
@@ -182,16 +195,15 @@ panel elsewhere.
 npm run prelockcheck   # timeout bounds + verification gate
 ```
 
-Before the desk locks its own token into a swap, it runs the cheap checks that
-cover the residual (non-custodial) settlement risks from `docs/SETTLEMENT-MODEL.md`:
+Before the desk commits its own token to a swap, it runs the cheap checks that
+cover the residual settlement risks from `docs/SETTLEMENT-MODEL.md`:
 
 - **Timeout bounds** (`PRELOCK_BOUNDS`, pure, in the quote engine) — an inbound
   proposal whose `timeout` is below `minTimeoutSec` (late-lock risk) or above
   `maxTimeoutSec` (liquidity held hostage) is rejected *before* any inventory is
   reserved.
 - **Counterparty verification** (`CounterpartyVerifier`, adapter) — runs right
-  before the lock in both directions (before `deposit` as proposer, before
-  `acceptSwap` as acceptor). The Sphere implementation confirms the counterparty
+  before the desk deposits its leg. The Sphere implementation confirms the counterparty
   identity resolves; the deeper ownership + non-inclusion proof is a marked TODO
   pending an SDK uniqueness-service primitive. `REQUIRE_VERIFICATION=true` blocks
   on failure (releasing the reservation); `false` runs warn-only. Every check is
@@ -283,42 +295,48 @@ SDK warns and runs unauthenticated without it). A fresh wallet has balance 0, so
 the desk will post its intent but reject RFQs with `INSUFFICIENT_INVENTORY` until
 funded.
 
-## How settlement works (settlement is non-custodial)
+## Settlement (escrow agent today, native swap on the roadmap)
 
-When terms lock, the desk calls `sphere.swap.proposeSwap()`. From there the
-**SDK's own swap state machine** drives the swap:
+The protocol's native non-custodial predicate swap (`sphere.swap`) **isn't
+migrated to testnet2 yet** — the docs' `@escrow-testnet` returns
+`SWAP_RESOLVE_FAILED`, which the Unicity team confirmed is an oversight ("feel
+free to implement your own for now"; native escrow ETA "this year"). So this repo
+ships its **own escrow agent** (`src/ops/escrow.ts`, `@hau-escrow`, `npm run
+escrow`).
 
-```
-proposed → accepted → announced → depositing → awaiting_counter → concluding → completed
-```
+**How it settles.** On accept, the desk registers the swap with the escrow, tells
+the taker to pay its leg, and deposits its own — all as memo-tagged wallet-api
+transfers keyed by `swapId`. The escrow holds both legs and pays them out
+**crossed** only when both arrive (`escrow_settled`), and **refunds** a lone leg
+on timeout (`escrow_refunded`). Atomic from each party's view: both complete, or
+both keep their tokens. The escrow never nets a token — it pays out exactly what
+it receives — so it's a neutral coordinator, not a profit-taking middleman.
 
-The settlement is **non-custodial and trustless** — confirmed against Unicity's
-formal paper *"Predicates and Atomic Swaps"* (`unicitynetwork/unicity-predicates-tex`).
-Each party moves its **own** token into a predicate-controlled swap state recorded
-on the Unicity uniqueness service; the service is an append-only registry that
-returns inclusion proofs — it **never holds tokens and cannot steal**. The swap
-predicate cryptographically enforces both-or-nothing: a leg is claimable by the
-counterparty *iff* they committed in time (verified by inclusion proof), else it
-reverts to the owner after `timeout`. Proven: both follow → swap completes; either
-deviates → both keep their tokens. So "deposit" here means *locking your own
-token*, not handing it to a custodian, and `verifyPayout` checks the
-counterparty's committed state. See `docs/SETTLEMENT-MODEL.md` for the full
-mapping + the residual (non-custodial) risks: late-locking under the 2-tx variant,
-counterparty offering an unowned/spent token, and liquidity locked until
-`timeout`. Design implication: prefer **short timeouts** and verify the
-counterparty's token state before locking.
+**Robust by construction.** Because live `transfer:incoming` events don't replay
+across a restart, the escrow treats the **chain as the source of truth**: it
+persists swap state to disk, and on every tick reconciles which legs it holds
+from the actual wallet balance (allocating greedily so concurrent swaps never
+double-count), retrying the payout until it sticks. A mid-swap crash or a
+transient wallet-api/DNS blip self-heals; `escrow_open` is idempotent so a
+re-delivered mailbox message can't wipe recorded legs.
+
+This is **escrow-based** (the agent custodies both legs for the few seconds
+between deposit and payout) — honest framing, not the trustless non-custodial
+model. When the native predicate swap lands on v2, the desk swaps back to
+`sphere.swap` with **no change to the negotiation or risk layers**.
+`docs/SETTLEMENT-MODEL.md` documents that native model (from Unicity's formal
+paper *"Predicates and Atomic Swaps"*) as the target end-state.
 
 ## Next (Phase 2+)
 
-Everything below is enhancement — the settlement model is resolved (non-custodial,
-see `docs/SETTLEMENT-MODEL.md`) and the risk stack (two-venue median, daily-limits
-scheduler, kill-switch + failure breaker + P&L breaker, hash-chained audit,
-chain↔ledger true-up, ops dashboard) is wired.
+Everything below is enhancement — settlement works end to end via the escrow
+agent, and the risk stack (two-venue median, daily-limits scheduler, kill-switch
++ failure breaker + P&L breaker, hash-chained audit, chain↔ledger true-up, ops
+dashboard) is wired.
 
-- **Pre-lock counterparty check**: verify the counterparty's token (ownership +
-  non-inclusion proof) and use short `timeout`s, to cover the residual
-  liveness/griefing risks in `docs/SETTLEMENT-MODEL.md`.
-- Confirm the swap variant in `sphere.swap` (3-tx safe vs 2-tx late-lock hazard)
-  from SDK source or a quick team question — non-blocking.
-- Optional: port the settlement-critical path to Astrid (Rust) for the security
-  stack (WASM sandbox, capability tokens, signed audit) when heading to mainnet.
+- **Swap back to native `sphere.swap`** once the predicate-based non-custodial
+  escrow lands on v2 (Unicity ETA "this year") — no change to the negotiation or
+  risk layers; `docs/SETTLEMENT-MODEL.md` is the target model.
+- **Pre-lock counterparty check**: deepen `CounterpartyVerifier` to a full
+  ownership + non-inclusion proof once the SDK exposes the uniqueness-service
+  primitive.

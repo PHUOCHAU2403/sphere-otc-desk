@@ -1,5 +1,13 @@
 # Settlement model — findings
 
+> **Scope note.** This document analyses the protocol's **native** `sphere.swap`
+> settlement — the *target* model. It is **not yet migrated to testnet2** (the
+> Unicity team confirmed this; native escrow ETA "this year"), so the shipped
+> desk currently settles through its **own escrow agent** (escrow-based; see the
+> *Settlement* section of the README). This analysis is why native settlement is
+> the roadmap: when it lands, the desk swaps back with no change to negotiation
+> or risk.
+
 **Question we were blocked on:** is `sphere.swap` settled by a trusted custodian
 (escrow that holds funds), or is it trust-minimized?
 
