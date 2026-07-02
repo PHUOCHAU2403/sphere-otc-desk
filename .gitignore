@@ -10,3 +10,4 @@ taker-data/
 taker-tokens/
 escrow-data/
 escrow-tokens/
+*.tsbuildinfo

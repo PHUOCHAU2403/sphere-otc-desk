@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+html, body, #root {
+  min-height: 100%;
+  background: #0E0E10;
+  color: #E8E8E3;
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+}
