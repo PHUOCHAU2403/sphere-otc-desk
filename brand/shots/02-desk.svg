@@ -1,0 +1,34 @@
+<svg viewBox="0 0 1280 720" width="1280" height="720" xmlns="http://www.w3.org/2000/svg" role="img" font-family="'Helvetica Neue', Arial, sans-serif">
+  <title>Hau OTC Desk — market-maker live</title>
+  <rect width="1280" height="720" fill="#0E0E10"/>
+  <circle cx="92" cy="86" r="4.5" fill="#D2683B"/>
+  <text x="110" y="91" font-size="15" font-weight="600" letter-spacing="0.22em" fill="#8A8A85">STEP 2 · MARKET-MAKER · TESTNET2</text>
+
+  <rect x="80" y="120" width="1120" height="446" rx="18" fill="#16161A" stroke="#2A2A2E"/>
+  <rect x="80" y="120" width="1120" height="52" rx="18" fill="#1C1C21"/>
+  <rect x="80" y="150" width="1120" height="22" fill="#1C1C21"/>
+  <circle cx="112" cy="146" r="6.5" fill="#E1554E"/><circle cx="136" cy="146" r="6.5" fill="#E6B14C"/><circle cx="160" cy="146" r="6.5" fill="#5FBF8E"/>
+  <text x="640" y="151" text-anchor="middle" font-size="14" letter-spacing="0.05em" fill="#7A7A73" font-family="'SF Mono','JetBrains Mono',Consolas,monospace">desk — @hau-otc-desk</text>
+
+  <g font-family="'SF Mono','JetBrains Mono',Consolas,monospace" font-size="21" xml:space="preserve">
+    <text x="112" y="222"><tspan fill="#5FBF8E">➜</tspan><tspan fill="#6E6E68">  ~/sphere-otc-desk </tspan><tspan fill="#C9C9C4"> npm run live</tspan></text>
+    <text x="112" y="266"><tspan fill="#6E6E68">desk identity: </tspan><tspan fill="#E0A56A">@hau-otc-desk</tspan></text>
+    <text x="112" y="304"><tspan fill="#6E6E68">received incoming transfers: 6  →  inventory </tspan><tspan fill="#E0A56A">115 UCT</tspan></text>
+    <text x="112" y="342"><tspan fill="#6E6E68">market intent posted</tspan></text>
+    <rect x="88" y="372" width="1104" height="52" rx="9" fill="#D2683B" opacity="0.12"/>
+    <rect x="88" y="372" width="4" height="52" rx="2" fill="#D2683B"/>
+    <text x="112" y="405" font-size="22"><tspan fill="#D2683B" font-weight="700">OTC desk running</tspan><tspan fill="#8A8A85">  — listening for RFQs…</tspan></text>
+    <text x="112" y="470"><tspan fill="#57574F">[quote]  </tspan><tspan fill="#B7B7B1">a544a282  </tspan><tspan fill="#E0A56A">5 UCT</tspan><tspan fill="#6E6E68"> @ </tspan><tspan fill="#B7B7B1">1.25625</tspan><tspan fill="#6E6E68">  →  agreed, opening escrow swap</tspan></text>
+  </g>
+
+  <g transform="translate(80,612)">
+    <rect x="0" y="0" width="60" height="60" rx="14" fill="#16161A" stroke="#2A2A2E"/>
+    <g transform="translate(9,9) scale(0.42)">
+      <rect x="18" y="20" width="12" height="60" rx="3" fill="#F7F6F2"/><rect x="70" y="20" width="12" height="60" rx="3" fill="#F7F6F2"/>
+      <rect x="31" y="41" width="28" height="7" rx="2" fill="#D2683B"/><polygon points="58,36 58,53 72,44.5" fill="#D2683B"/>
+      <rect x="41" y="53" width="28" height="7" rx="2" fill="#D2683B"/><polygon points="42,48 42,65 28,56.5" fill="#D2683B"/>
+    </g>
+    <text x="76" y="26" font-size="19" font-weight="700" letter-spacing="0.1em" fill="#F7F6F2">HAU OTC DESK</text>
+    <text x="76" y="50" font-size="14.5" fill="#8A8A85">A two-way market from deterministic pricing — 115 UCT live inventory.</text>
+  </g>
+</svg>
