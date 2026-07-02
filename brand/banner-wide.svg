@@ -1,21 +1,10 @@
-<svg viewBox="0 0 1800 300" width="1800" height="300" xmlns="http://www.w3.org/2000/svg" role="img" font-family="'Helvetica Neue', Arial, sans-serif">
-  <title>Hau OTC Desk — wide banner</title>
-  <rect width="1800" height="300" fill="#111113"/>
+<svg viewBox="0 0 2400 240" width="2400" height="240" xmlns="http://www.w3.org/2000/svg" role="img" font-family="'Helvetica Neue', Arial, sans-serif">
+  <title>Hau OTC Desk — wide strip banner</title>
+  <rect width="2400" height="240" fill="#111113"/>
 
-  <!-- eyebrow -->
-  <circle cx="94" cy="92" r="4.5" fill="#D2683B"/>
-  <text x="112" y="97" font-size="16" font-weight="600" letter-spacing="0.24em" fill="#9A9A93">UNICITY AGENTSPHERE</text>
-
-  <!-- title -->
-  <text x="90" y="176" font-size="62" font-weight="700" letter-spacing="0.02em" fill="#F7F6F2">HAU OTC DESK</text>
-  <rect x="94" y="200" width="84" height="6" rx="3" fill="#D2683B"/>
-
-  <!-- tagline -->
-  <text x="94" y="250" font-size="24" font-weight="500" fill="#D4D4CF">Autonomous OTC market-maker — private RFQ, atomic escrow settlement.</text>
-
-  <!-- monogram card -->
-  <rect x="1520" y="55" width="190" height="190" rx="42" fill="#17171A" stroke="#2A2A2E"/>
-  <g transform="translate(1552,87) scale(1.25)">
+  <!-- monogram card (left, vertically centered) -->
+  <rect x="100" y="45" width="150" height="150" rx="34" fill="#17171A" stroke="#2A2A2E"/>
+  <g transform="translate(126,71) scale(0.99)">
     <rect x="18" y="20" width="12" height="60" rx="3" fill="#F7F6F2"/>
     <rect x="70" y="20" width="12" height="60" rx="3" fill="#F7F6F2"/>
     <rect x="31" y="41" width="28" height="7" rx="2" fill="#D2683B"/>
@@ -23,4 +12,15 @@
     <rect x="41" y="53" width="28" height="7" rx="2" fill="#D2683B"/>
     <polygon points="42,48 42,65 28,56.5" fill="#D2683B"/>
   </g>
+
+  <!-- eyebrow -->
+  <circle cx="292" cy="72" r="4" fill="#D2683B"/>
+  <text x="308" y="77" font-size="15" font-weight="600" letter-spacing="0.24em" fill="#9A9A93">UNICITY AGENTSPHERE</text>
+
+  <!-- title -->
+  <text x="290" y="132" font-size="48" font-weight="700" letter-spacing="0.02em" fill="#F7F6F2">HAU OTC DESK</text>
+  <rect x="294" y="150" width="72" height="5" rx="2.5" fill="#D2683B"/>
+
+  <!-- tagline -->
+  <text x="292" y="182" font-size="20" font-weight="500" fill="#D4D4CF">Autonomous OTC market-maker — private RFQ, atomic escrow settlement.</text>
 </svg>
